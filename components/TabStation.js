@@ -277,12 +277,12 @@ bld.component('tab-station', {
                     </div>
                     <div class="card-footer" id="mapPanelFooter">
                         <div class="btn-group btn-group-sm pull-right" role="group" style="float: left">
-                            <button type="button" class="btn btn-outline-primary" :class="{ active: satelliteEnabled }" @click="setSatelliteLayer()" title="卫星图层">
+                            <button v-if="settings.map.baseLayerProvider.current !== 'OSM'" type="button" class="btn btn-outline-primary" :class="{ active: satelliteEnabled }" @click="setSatelliteLayer()" title="卫星图层">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 1024 1024" fill="currentColor">
                                     <path d="M702.171429 752.55873c27.631746 0 48.761905-21.130159 48.761904-47.136508 0-11.377778-4.87619-22.755556-11.377777-30.882539l39.009523-39.009524c19.504762-19.504762 19.504762-50.387302 0-68.266667l-206.425396-206.425397 92.647619-92.647619 94.273015 94.273016c19.504762 19.504762 50.387302 19.504762 68.266667 0l32.507937-32.507936c19.504762-19.504762 19.504762-50.387302 0-68.266667l-235.68254-235.68254c-19.504762-19.504762-50.387302-19.504762-68.266667 0l-32.507936 32.507937c-19.504762 19.504762-19.504762 50.387302 0 68.266666l94.273016 94.273016-92.647619 92.647619-206.425397-206.425397c-19.504762-19.504762-50.387302-19.504762-68.266667 0l-152.787301 152.787302c-19.504762 19.504762-19.504762 50.387302 0 68.266667l206.425396 206.425397-92.647619 92.647619-94.273016-94.273016c-19.504762-19.504762-50.387302-19.504762-68.266666 0l-32.507937 32.507936c-19.504762 19.504762-19.504762 50.387302 0 68.266667l235.68254 235.68254c19.504762 19.504762 50.387302 19.504762 68.266667 0l32.507936-32.507937c19.504762-19.504762 19.504762-50.387302 0-68.266667l-94.273016-94.273015 92.647619-92.64762 206.425397 206.425397c19.504762 19.504762 50.387302 19.504762 68.266667 0l45.511111-45.511111c8.126984 6.501587 19.504762 9.752381 30.88254 9.752381z" p-id="7032"></path><path d="M897.219048 658.285714h-71.517461c0 43.885714-17.879365 86.146032-50.387301 117.028572-32.507937 30.88254-76.393651 48.761905-123.530159 48.761904v68.266667c136.533333 0 245.434921-105.650794 245.434921-234.057143z" p-id="7033"></path><path d="M952.48254 658.285714c0 157.663492-134.907937 286.069841-299.073016 286.069842v68.266666c204.8 0 370.590476-159.288889 370.590476-352.711111h-71.51746z"></path>
                                 </svg>
                             </button>
-                            <button type="button" class="btn btn-outline-primary" :class="{ active: mapEnabled }" @click="setMapLayer()" title="地图图层">
+                            <button v-if="settings.map.baseLayerProvider.current !== 'OSM'" type="button" class="btn btn-outline-primary" :class="{ active: mapEnabled }" @click="setMapLayer()" title="地图图层">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-map" viewBox="0 0 16 16">
                                     <path fill-rule="evenodd" d="M15.817.113A.5.5 0 0 1 16 .5v14a.5.5 0 0 1-.402.49l-5 1a.502.502 0 0 1-.196 0L5.5 15.01l-4.902.98A.5.5 0 0 1 0 15.5v-14a.5.5 0 0 1 .402-.49l5-1a.5.5 0 0 1 .196 0L10.5.99l4.902-.98a.5.5 0 0 1 .415.103zM10 1.91l-4-.8v12.98l4 .8V1.91zm1 12.98 4-.8V1.11l-4 .8v12.98zm-6-.8V1.11l-4 .8v12.98l4-.8z"/>
                                 </svg>
@@ -363,6 +363,7 @@ bld.component('tab-station', {
             renameEnabled: false,
             satelliteEnabled: false,
             mapEnabled: true,
+            currentBaseLayerProvider: null,
             mapItems: {
                 polyline: VueReactivity.shallowRef(null),
                 polylineOpposite: VueReactivity.shallowRef(null),
@@ -382,6 +383,56 @@ bld.component('tab-station', {
         }
     },
     methods: {
+        createBaseMapLayers(AMap){
+            const provider = this.settings.map.baseLayerProvider?.current || 'AMap';
+            if(provider === 'OSM'){
+                return [new AMap.TileLayer({
+                    tileUrl: 'https://tile.openstreetmap.org/[z]/[x]/[y].png',
+                    tileSize: 256,
+                    zooms: [1, 19],
+                    dataZooms: [1, 19],
+                    opacity: 1,
+                    zIndex: 0
+                })];
+            }
+            if(typeof AMap.createDefaultLayer === 'function'){
+                return [AMap.createDefaultLayer({zooms:[2,20], visible:true, opacity:1, zIndex:0})];
+            }
+            return [];
+        },
+        syncOsmAttribution(){
+            const container = document.getElementById('amap');
+            if(!container) return;
+            let attribution = document.getElementById('bldOsmAttribution');
+            if(!attribution){
+                attribution = document.createElement('div');
+                attribution.id = 'bldOsmAttribution';
+                attribution.style.cssText = 'position:absolute;right:6px;bottom:4px;z-index:9999;padding:2px 5px;background:rgba(255,255,255,.88);font:11px/1.4 Arial,sans-serif;color:#333;border-radius:3px;pointer-events:auto;';
+                attribution.innerHTML = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors';
+                container.appendChild(attribution);
+            }
+            attribution.style.display = (this.settings.map.baseLayerProvider?.current === 'OSM') ? 'block' : 'none';
+        },
+        updateBaseMapLayer(){
+            if(!this.map) return;
+            const provider = this.settings.map.baseLayerProvider?.current || 'AMap';
+            if(this.currentBaseLayerProvider === provider){ this.syncOsmAttribution(); return; }
+            try{
+                if(this.mapItems.satelliteLayer){
+                    this.map.remove(this.mapItems.satelliteLayer);
+                    this.mapItems.satelliteLayer.destroy?.();
+                    this.mapItems.satelliteLayer = null;
+                }
+                this.satelliteEnabled = false;
+                this.map.setLayers(this.createBaseMapLayers(window.AMap));
+                this.currentBaseLayerProvider = provider;
+                this.syncOsmAttribution();
+                if(provider === 'AMap') this.map.setMapStyle(this.settings.map.mapStyle.current);
+            }catch(e){
+                console.error('切换地图底图失败：', e);
+                this.$emit('toast',['切换地图底图失败','',e.message || String(e),false]);
+            }
+        },
         // mapInit()
         // 初始化地图div
         mapInit() {
@@ -391,21 +442,65 @@ bld.component('tab-station', {
             }
             document.getElementById('amap').innerHTML = '';
 
-            AMapLoader.load({
-                "key": window.AMapKey,
-                "version": "2.0",
-                "plugins": ['AMap.PlaceSearch', 'AMap.Driving', 'AMap.DistrictSearch', 'AMap.LineSearch']
-            }).then((AMap)=>{
+            const requiredPlugins = ['AMap.PlaceSearch', 'AMap.Driving', 'AMap.DistrictSearch', 'AMap.LineSearch'];
+            const mapServiceRegion = this.settings.general.mapServiceRegion?.current || 'domestic';
+            const useOsmBaseLayer = (this.settings.map.baseLayerProvider?.current || 'AMap') === 'OSM';
+            // OSM 自有瓦片作为底图时不再请求高德境外地图节点，避免触发世界地图权限依赖。
+            const useOverseasMap = !useOsmBaseLayer && (mapServiceRegion === 'oversea_sg' || mapServiceRegion === 'oversea_de');
+
+            // 国内继续使用项目原来的 AMapLoader；境外模式按高德新版文档匹配区域和入口域名。
+            let mapApiPromise;
+            if (useOverseasMap) {
+                mapApiPromise = new Promise((resolve, reject) => {
+                    const regionConfig = {
+                        oversea_sg: { type: 'oversea_sg', url: 'https://sg-webapi.opnavi.com/maps' },
+                        oversea_de: { type: 'oversea_de', url: 'https://de-webapi.opnavi.com/maps' },
+                    }[mapServiceRegion];
+
+                    const securityKey = this.settings.general.securityKey.current || '';
+                    if (!window.AMapKey || !securityKey) {
+                        reject(new Error('境外模式需要同时填写高德 Web 端 JSAPI Key 和安全密钥'));
+                        return;
+                    }
+                    window._AMapSecurityConfig = { securityJsCode: securityKey };
+                    window._AMapServiceConfig = { type: regionConfig.type };
+
+                    const apiScript = document.createElement('script');
+                    apiScript.async = true;
+                    apiScript.src = `${regionConfig.url}?v=2.0&key=${encodeURIComponent(window.AMapKey)}`;
+                    apiScript.onload = () => {
+                        if (!window.AMap || typeof window.AMap.plugin !== 'function') {
+                            reject(new Error('境外地图 API 已加载，但 AMap 对象不可用'));
+                            return;
+                        }
+                        window.AMap.plugin(requiredPlugins, () => resolve(window.AMap));
+                    };
+                    apiScript.onerror = () => reject(new Error(`无法加载高德境外服务节点：${regionConfig.url}`));
+                    document.head.appendChild(apiScript);
+                });
+            } else {
+                mapApiPromise = AMapLoader.load({
+                    "key": window.AMapKey,
+                    "version": "2.0",
+                    "plugins": requiredPlugins
+                });
+            }
+
+            mapApiPromise.then((AMap)=>{
                 this.map = new AMap.Map('amap', {
+                    showOversea: useOverseasMap,
                     showIndoorMap: false,
                     rotateEnable: false,
                     doubleClickZoom: false,
                     isHotspot: false,
                     resizeEnable: true,
                     features: ['bg', 'road', 'point'],
+                    layers: this.createBaseMapLayers(AMap),
                     defaultCursor: 'move',
-                    mapStyle: this.settings.map.mapStyle.current
+                    mapStyle: this.settings.map.baseLayerProvider?.current === 'OSM' ? undefined : this.settings.map.mapStyle.current
                 });
+                this.currentBaseLayerProvider = this.settings.map.baseLayerProvider?.current || 'AMap';
+                this.syncOsmAttribution();
 
                 this.mapItems.labelsLayer = new AMap.LabelsLayer({
                     zooms: [3, 20],
@@ -424,7 +519,11 @@ bld.component('tab-station', {
                 this.map.resize();
                 this.chrome = AMap.Browser.chrome; // Browser check
             }).catch((e)=>{
-                this.$emit('toast', ['地图加载失败', '', '地图加载失败，可能是网络问题？', false]);
+                console.error('地图加载失败：', e);
+                const regionHint = useOverseasMap
+                    ? '请检查高德世界地图权限是否已开通、Key/安全密钥是否匹配，以及所选境外节点是否可用。'
+                    : '请检查网络、Web端 JSAPI Key 和安全密钥。';
+                this.$emit('toast', ['地图加载失败', '', `${regionHint}${e && e.message ? ' 详情：' + e.message : ''}`, false]);
             });
             /* map.setFeatures(['bg', 'road']); */
             return;
@@ -541,14 +640,7 @@ bld.component('tab-station', {
                     });
                     this.nodes.splice(this.selectedNode + 1, nextStation - this.selectedNode - 1);
 
-                    var drivingSearch = new AMap.Driving({
-                        policy: AMap.DrivingPolicy.LEAST_TIME
-                    });
-                    AMap.Event.addListener(drivingSearch, "complete", this.autoSetRouteBehind);
-                    drivingSearch.search(
-                        new AMap.LngLat(this.nodes[this.selectedNode].lng, this.nodes[this.selectedNode].lat),
-                        new AMap.LngLat(this.nodes[this.selectedNode + 1].lng, this.nodes[this.selectedNode + 1].lat)
-                    );
+                    this.requestRoadRoute(this.nodes[this.selectedNode], this.nodes[this.selectedNode + 1], this.autoSetRouteBehind);
                 }
             }
             if(this.nodes.length && !this.stations.length){
@@ -594,6 +686,7 @@ bld.component('tab-station', {
 
             // 新建节点
             var newNode;
+            let smartRouteContext = null;
             if(this.selectedMapTool == 'watch'){
                 return;
             }else if(this.selectedMapTool == 'newWaypoint'){ // 路径点
@@ -604,16 +697,6 @@ bld.component('tab-station', {
                     'lat': lat
                 };
             }else{ // 站点
-                var stationSearch = new AMap.PlaceSearch({ // 搜索站名
-                    city: '全国',
-                    type: '公交车站',
-                    pageSize: 1,
-                    pageIndex: 1,
-                    map: null,
-                    panel: null
-                });
-                stationSearch.searchNearBy('', [lng, lat], 200, this.autoRenameStation);
-
                 // 新增路径点
                 newNode = {
                     'type': 'station',
@@ -622,29 +705,22 @@ bld.component('tab-station', {
                     'lat': lat
                 };
 
-                // “自动规划”算路
+                // “自动规划”算路。保存新站点对象引用，避免请求返回前
+                // 用户切换选中节点后，路线结果被写入错误的站点。
                 if(this.selectedMapTool == 'newStationSmart' && this.nodes.length){
-                    var drivingSearch = new AMap.Driving({
-                        policy: AMap.DrivingPolicy.LEAST_TIME
-                    });
-                    AMap.Event.addListener(drivingSearch, "complete", this.autoSetRouteAhead);
-                    drivingSearch.search(
-                        new AMap.LngLat(this.nodes[this.selectedNode].lng, this.nodes[this.selectedNode].lat),
-                        new AMap.LngLat(lng, lat)
-                    );
-                    if(this.routeSearchResultGot !== null){
-                        setTimeout(() => {
-                            if(!this.routeSearchResultGot){
-                                this.$emit('toast', ['自动算路超时', '', '如果自动算路失败，请检查 API Key', false]);
-                            }
-                            this.routeSearchResultGot = null;
-                        }, 2000);
-                    }
+                    this.routeSearchResultGot = false;
+                    const routeProvider = this.settings.general.routingProvider?.current || 'AMap';
+                    smartRouteContext = {
+                        fromNode: this.nodes[this.selectedNode],
+                        targetNode: newNode,
+                        provider: routeProvider
+                    };
                 }
             }
 
             // 添加节点
             this.line.route[this.trueDirection].splice(index, 0, newNode);
+            if (newNode.type === 'station') this.identifyStationName(lng, lat, newNode);
 
             // 设定新的选定点
             if(this.selectedMapMode == 'after'){
@@ -654,91 +730,163 @@ bld.component('tab-station', {
                 this.selectedNode = 0;
             }
 
+            // 节点插入后再发起请求；自动算路回调持有目标站点引用。
+            if (smartRouteContext) {
+                const { fromNode, targetNode, provider } = smartRouteContext;
+                this.requestRoadRoute(fromNode, targetNode, result => this.autoSetRouteAhead(result, smartRouteContext));
+                const routeTimeout = provider === 'AMap' ? 6000 : (provider === 'HERE' ? 30000 : 15000);
+                setTimeout(() => {
+                    if(this.routeSearchResultGot === false){
+                        this.$emit('toast', ['自动算路超时', '', `${provider} 请求超过 ${Math.round(routeTimeout / 1000)} 秒仍未返回；请检查网络、API Key、配额或服务可用区域。`, false]);
+                    }
+                    if (this.routeSearchResultGot !== false) this.routeSearchResultGot = null;
+                }, routeTimeout);
+            }
+
             // 刷新地图
             this.loadMapLine(false);
         },
         // newNode => autoRenameStation
         // 新建节点后自动命名车站
+        async identifyStationName(lng, lat, nodeRef){
+            const configured = this.settings.general.stationSearchProvider?.current || 'AUTO';
+            const routeProvider = this.settings.general.routingProvider?.current || 'AMap';
+            const provider = configured === 'AUTO' ? (routeProvider === 'HERE' ? 'HERE' : 'AMap') : configured;
+            const fallbackName = '新站点 #' + this.positionId(lng, lat);
+            try {
+                if (provider === 'HERE') {
+                    const result = await BLDInternational.searchNearbyBusStop(lng, lat, this.settings);
+                    if (result?.title) nodeRef.name = result.title.replace(/\s*\([^)]*\)$/, '');
+                    else nodeRef.name = fallbackName;
+                } else {
+                    const stationSearch = new AMap.PlaceSearch({ city: '全国', type: '公交车站', pageSize: 1, pageIndex: 1, map: null, panel: null });
+                    stationSearch.searchNearBy('', [lng, lat], 200, (status, result) => {
+                        if (status === 'complete' && result?.poiList?.pois?.length) {
+                            nodeRef.name = result.poiList.pois[0].name.replace(/\(.*\)$/, '');
+                        } else nodeRef.name = fallbackName;
+                        if (this.settings.map.showStationName.current) this.loadMapLine(false);
+                    });
+                    return;
+                }
+            } catch (error) {
+                console.error(provider + ' nearby bus stop search error', error);
+                nodeRef.name = fallbackName;
+                this.$emit('toast', ['站点周边识别失败', '', provider + '：' + error.message, false]);
+            }
+            if (this.settings.map.showStationName.current) this.loadMapLine(false);
+        },
         autoRenameStation(status, result){
-            if(status == "complete") {
-                this.nodes[this.selectedNode].name = result.poiList.pois[0].name.replace(/\(.*\)$/, '');
-            } else {
-                this.nodes[this.selectedNode].name = '新站点 #'+ this.positionId(this.nodes[this.selectedNode].lng, this.nodes[this.selectedNode].lat);
-            }
-
-            if(this.settings.map.showStationName.current){
-                this.loadMapLine(false);
-            }
+            // Compatibility wrapper for any legacy callback references.
+            const node = this.nodes[this.selectedNode];
+            if (!node) return;
+            if (status === 'complete' && result?.poiList?.pois?.length) node.name = result.poiList.pois[0].name.replace(/\(.*\)$/, '');
+            else node.name = '新站点 #' + this.positionId(node.lng, node.lat);
+            if (this.settings.map.showStationName.current) this.loadMapLine(false);
         },
         // newNode => autoSetRouteAhead
         // 新建节点后自动规划上一节点至当前站路径并搜索至下一节点路径（仅限自动设站模式）
-        autoSetRouteAhead(result){
-            this.routeSearchResultGot = true;
-            if(result.routes[0].steps.length){
-                var lastLngLat;
-                result.routes[0].steps.forEach(step => {
-                    step.path.forEach(lnglat => {
-                        if(this.selectedNode && lnglat.getLng() == this.nodes[this.selectedNode - 1].lng && lnglat.getLat() == this.nodes[this.selectedNode - 1].lat){
-                            return;
-                        }
-                        this.nodes.splice(this.selectedNode, 0, {
-                            'type': 'waypoint',
-                            'name': '途经点 #' + this.positionId(lnglat.getLng(), lnglat.getLat()),
-                            'lng': lnglat.getLng(),
-                            'lat': lnglat.getLat()
-                        });
-                        lastLngLat = lnglat;
-                        this.selectedNode ++;
-                    });
-                });
-                this.nodes[this.selectedNode].lng = lastLngLat.getLng();
-                this.nodes[this.selectedNode].lat = lastLngLat.getLat();
-
-                if(this.selectedNode != this.nodes.length - 1){
-                    var nextStation = this.nodes.findIndex((node, index) => {
-                        return (index > this.selectedNode) && (node.type == 'station');
-                    });
-                    this.nodes.splice(this.selectedNode + 1, nextStation - this.selectedNode - 1);
-
-                    var drivingSearch = new AMap.Driving({
-                        policy: AMap.DrivingPolicy.LEAST_TIME
-                    });
-                    AMap.Event.addListener(drivingSearch, "complete", this.autoSetRouteBehind);
-                    drivingSearch.search(
-                        new AMap.LngLat(this.nodes[this.selectedNode].lng, this.nodes[this.selectedNode].lat),
-                        new AMap.LngLat(this.nodes[this.selectedNode + 1].lng, this.nodes[this.selectedNode + 1].lat)
-                    );
-                }
-
-                this.loadMapLine(false);
+        requestRoadRoute(from, to, callback){
+            const provider=this.settings.general.routingProvider?.current||'AMap';
+            if(provider==='AMap'){
+                const search=new AMap.Driving({policy:AMap.DrivingPolicy.LEAST_TIME});
+                AMap.Event.addListener(search,'complete',callback);
+                AMap.Event.addListener(search,'error',e=>{ this.routeSearchResultGot=null; this.$emit('toast',['自动算路失败','','高德路线服务错误：'+(e?.info||'未知错误'),false]); });
+                search.search(new AMap.LngLat(from.lng,from.lat),new AMap.LngLat(to.lng,to.lat)); return;
             }
+            BLDInternational.route(provider,from,to,this.settings).then(routeResult=>{
+                // ORS returns a coordinate array; HERE also returns the API's
+                // matched destination so the newly created stop can be snapped.
+                const payload = Array.isArray(routeResult) ? { coordinates: routeResult } : routeResult;
+                callback(payload);
+            }).catch(e=>{
+                console.error(provider+' route error',e); this.routeSearchResultGot=null;
+                this.$emit('toast',['自动算路失败','',provider+'：'+e.message,false]);
+            });
+        },
+        getRouteCoordinates(result){
+            if(result?.coordinates) return result.coordinates;
+            const out=[]; (result?.routes?.[0]?.steps||[]).forEach(step=>(step.path||[]).forEach(p=>out.push({lng:p.getLng(),lat:p.getLat()}))); return out;
+        },
+        autoSetRouteAhead(result, context = null){
+            this.routeSearchResultGot=true;
+            if (context?.provider === 'HERE' && result?.snapSource?.includes('native waypoint matcher')) {
+                const reason = result.snapWarning || result.vectorTileErrorMessage || '点击位置周边 60 米内未找到可用的机动车道路几何数据';
+                this.$emit('toast',['HERE 最近道路匹配未启用','',`本次使用 HERE 原生终点匹配作为回退：${reason}`,false]);
+            }
+            if (context?.provider === 'HERE' && Number.isFinite(result?.routeMatchOffsetMeters) && result.routeMatchOffsetMeters > 15) {
+                console.warn(`HERE 路由终点与本地最近道路投影点相差 ${Math.round(result.routeMatchOffsetMeters)}m；站点仍优先保留最近道路投影点。`);
+            }
+            const coords=this.getRouteCoordinates(result).filter(p => Number.isFinite(p.lng) && Number.isFinite(p.lat) && Math.abs(p.lng) <= 180 && Math.abs(p.lat) <= 90);
+            if(coords.length < 2){ this.$emit('toast',['自动算路失败','','路线服务未返回有效坐标，未修改站点位置。',false]); return; }
+
+            // Use the original node object, not the mutable selectedNode index:
+            // the user may select another station while an API request is pending.
+            const targetNode = context?.targetNode || this.nodes[this.selectedNode];
+            let targetIndex = targetNode ? this.nodes.indexOf(targetNode) : -1;
+            if (targetIndex < 0) {
+                this.$emit('toast',['自动算路失败','','新建站点已不存在，已忽略这次迟到的路线结果。',false]);
+                return;
+            }
+            const fromNode = context?.fromNode || this.nodes[Math.max(0, targetIndex - 1)];
+
+            // AMap's Driving geometry endpoint was used for snapping in the
+            // original BLD flow. HERE provides a better authoritative value:
+            // sections[].arrival.place.location (the matched road waypoint).
+            // ORS falls back to the last geometry coordinate.
+            const snap = result?.snappedDestination || coords[coords.length - 1];
+            const validSnap = snap && Number.isFinite(Number(snap.lng)) && Number.isFinite(Number(snap.lat))
+                && Math.abs(Number(snap.lng)) <= 180 && Math.abs(Number(snap.lat)) <= 90;
+            const distanceMeters = (a, b) => {
+                const rad = Math.PI / 180;
+                const dLat = (Number(b.lat) - Number(a.lat)) * rad;
+                const dLng = (Number(b.lng) - Number(a.lng)) * rad;
+                const h = Math.sin(dLat / 2) ** 2 + Math.cos(Number(a.lat) * rad) * Math.cos(Number(b.lat) * rad) * Math.sin(dLng / 2) ** 2;
+                return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+            };
+            const snapDistance = validSnap ? distanceMeters(targetNode, snap) : Infinity;
+            // HERE's local vector-tile matcher searches within 60 m; allow a small
+            // tolerance for tile geometry / routing-map coordinate differences.
+            const SNAP_LIMIT_METERS = context?.provider === 'HERE' ? 65 : 250;
+
+            // Add the route's shape points before the new station. Skip the
+            // origin endpoint when it is already represented by the previous node.
+            const routePoints = coords.slice(0, -1);
+            routePoints.forEach((p, i) => {
+                if (fromNode && distanceMeters(fromNode, p) < 3) return;
+                if (validSnap && distanceMeters(snap, p) < 1.5) return;
+                const previous = this.nodes[targetIndex - 1];
+                if (previous && distanceMeters(previous, p) < 1.5) return;
+                this.nodes.splice(targetIndex, 0, {type:'waypoint',name:'途经点 #'+this.positionId(p.lng,p.lat),lng:p.lng,lat:p.lat});
+                targetIndex++;
+            });
+
+            // Restore the legacy road-snapping behavior. HERE normally supplies the
+            // local geometric nearest-road projection; native waypoint matching
+            // is used only when vector-tile lookup / bus routing cannot support it.
+            if (validSnap && snapDistance <= SNAP_LIMIT_METERS) {
+                targetNode.lng = Number(snap.lng);
+                targetNode.lat = Number(snap.lat);
+            } else if (validSnap && snapDistance > SNAP_LIMIT_METERS) {
+                this.$emit('toast',['站点未吸附到道路','',`路线匹配点距离点击位置 ${Math.round(snapDistance)} 米，超过 ${SNAP_LIMIT_METERS} 米安全范围，已保留原站点位置。`,false]);
+            }
+
+            this.selectedNode = targetIndex;
+            if(this.selectedNode!==this.nodes.length-1){const next=this.nodes.findIndex((n,i)=>i>this.selectedNode&&n.type==='station');if(next>this.selectedNode)this.nodes.splice(this.selectedNode+1,next-this.selectedNode-1);if(this.nodes[this.selectedNode+1])this.requestRoadRoute(this.nodes[this.selectedNode],this.nodes[this.selectedNode+1],this.autoSetRouteBehind);}
+            this.loadMapLine(false);
         },
         // newNode => autoSetRouteAhead => autoSetRouteBehind
         // 新建节点后自动规划当前站至下一节点路径（仅限自动设站模式）
         // deleteNodes => autoSetRouteBehind
         // 删除节点后自动重新规划（仅限“只显示站点”时）
         autoSetRouteBehind(result){
-            var lastLngLat;
-            var originStation = this.selectedNode;
-
-            result.routes[0].steps.forEach(step => {
-                step.path.forEach(lnglat => {
-                    if(this.selectedNode && lnglat.getLng() == this.nodes[this.selectedNode].lng && lnglat.getLat() == this.nodes[this.selectedNode].lat){
-                        return;
-                    }
-                    this.nodes.splice(this.selectedNode + 1, 0, {
-                        'type': 'waypoint',
-                        'name': '途经点 #' + this.positionId(lnglat.getLng(), lnglat.getLat()),
-                        'lng': lnglat.getLng(),
-                        'lat': lnglat.getLat()
-                    });
-                    lastLngLat = lnglat;
-                    this.selectedNode ++;
-                });
+            const coords=this.getRouteCoordinates(result); const originStation=this.selectedNode;
+            coords.forEach(p=>{
+                const current=this.nodes[this.selectedNode];
+                if(current && Math.abs(p.lng-current.lng)<1e-7 && Math.abs(p.lat-current.lat)<1e-7) return;
+                this.nodes.splice(this.selectedNode+1,0,{type:'waypoint',name:'途经点 #'+this.positionId(p.lng,p.lat),lng:p.lng,lat:p.lat});
+                this.selectedNode++;
             });
-
-            this.selectedNode = originStation;
-            this.loadMapLine(false);
+            this.selectedNode=originStation; this.loadMapLine(false);
         },
         // selectNode
         // 在节点列表中选中节点
@@ -979,9 +1127,10 @@ bld.component('tab-station', {
         // loadMapLine
         // 在地图上绘制线路
         loadMapLine(resetCenter = true, resizeMap = false){
-            // 加载设置项
+            // 加载设置项；底图来源与算路 API 分离，可独立切换。
+            this.updateBaseMapLayer();
             this.mapItems.labelsLayer.setCollision(parseInt(this.settings.map.showStationName.current));
-            this.map.setMapStyle(this.settings.map.mapStyle.current);
+            if((this.settings.map.baseLayerProvider?.current || 'AMap') === 'AMap') this.map.setMapStyle(this.settings.map.mapStyle.current);
 
             // 清除地图元素
             try {

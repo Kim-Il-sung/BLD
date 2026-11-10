@@ -19,6 +19,8 @@
         <script src="tools/crc32c.js"></script>
         <script src="tools/deepclone.js"></script>
         <script src="tools/utils.js"></script>
+        <script src="tools/international-services.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
         <script src="tools/clipboard.min.js"></script>
         <script src="tools/jscolor.min.js"></script>
         <script src="tools/html2canvas.min.js"></script>
@@ -79,6 +81,11 @@
                                     <li><a class="dropdown-item" href="javascript: void(0)" id="copyLine" :data-clipboard-text="JSON.stringify(lineFile)">保存线路至剪贴板</a></li>
                                     <li><a class="dropdown-item" href="javascript: void(0)" @click="uploadLine()">从文件读取线路</a></li>
                                     <li><a class="dropdown-item" href="javascript: void(0)" @click="pasteLine()">从剪贴板读取线路</a></li>
+                                    <li><hr class="dropdown-divider" /></li>
+                                    <li><a class="dropdown-item" href="javascript: void(0)" @click="copyDirectionRoute('up')">复制上行数据</a></li>
+                                    <li><a class="dropdown-item" href="javascript: void(0)" @click="copyDirectionRoute('down')">复制下行数据</a></li>
+                                    <li><a class="dropdown-item" href="javascript: void(0)" @click="readDirectionAsDown()">读取方向数据为下行（覆盖下行）</a></li>
+                                    <li><hr class="dropdown-divider" /></li>
                                     <li><a class="dropdown-item" href="javascript: void(0)" @click="loadLineFromReality()">读取现存线路</a></li>
                                     <li><hr class="dropdown-divider" /></li>
                                     <li><a class="dropdown-item" href="javascript: void(0)" :class="{ 'disabled': (!undoable || settings.general.enableUndoFunc.current != '1') }" v-text="settings.general.enableUndoFunc.current == '1' ? '撤销上一步操作' : '撤销 (已禁用)'" @click="undo()"></a></li>
@@ -115,7 +122,7 @@
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">
-                                <div class="mb-3" v-if="modalLineSearch.dataSource != 'ChinaRailway'">
+                                <div class="mb-3" v-if="!['ChinaRailway','Google'].includes(modalLineSearch.dataSource)">
                                     <label class="col-form-label">线路名称:</label>
                                     <input type="text" class="form-control" autocomplete="off" placeholder="填写线路完整名称" v-model.trim="modalLineSearch.lineName" />
                                 </div>
@@ -149,22 +156,36 @@
                                     <label class="col-form-label">日期:</label>
                                     <input type="text" class="form-control" autocomplete="off" placeholder="YYYYMMDD" v-model.trim="modalLineSearch.chinaRailway.date" />
                                 </div>
+                                <div class="mb-3" v-if="modalLineSearch.dataSource == 'AT'">
+                                    <label class="col-form-label">AT GTFS 文件:</label>
+                                    <input type="file" class="form-control" accept=".zip,application/zip" @change="selectATGtfsFile($event)" />
+                                    <small class="text-muted">请从 Auckland Transport 官方 GTFS 页面下载最新 ZIP 后选择。读取完整线路、站点及 shapes。</small>
+                                </div>
+                                <div class="mb-3" v-if="modalLineSearch.dataSource == 'Google'">
+                                    <label class="col-form-label">起点（地址或站名）:</label>
+                                    <input type="text" class="form-control mb-2" v-model.trim="modalLineSearch.google.origin" placeholder="例如 Britomart, Auckland" />
+                                    <label class="col-form-label">终点（地址或站名）:</label>
+                                    <input type="text" class="form-control" v-model.trim="modalLineSearch.google.destination" placeholder="例如 Auckland Airport" />
+                                    <small class="text-muted">Google Transit 返回的是起终点之间的乘客出行方案，不是完整公交线路目录；仅导入结果中的公交路段。</small>
+                                </div>
                                 <div class="mb-3">
                                     <label class="col-form-label">数据源:</label>
                                     <select class="form-select" v-model="modalLineSearch.dataSource">
                                         <option selected value="AMap">高德地图</option>
                                         <option value="chelaile">车来了</option>
                                         <option value="ChinaRailway">中国铁路 12306</option>
+                                        <option value="Google">Google Transit（起终点查询）</option>
+                                        <option value="AT">Auckland Transport GTFS（本地 ZIP）</option>
                                         <option disabled value="BMap">未来可能会添加更多数据源…</option>
                                         <option disabled value="CMap">如有相关数据源推荐，可以联系 BobLiu</option>
                                         <option disabled value="DMap">不过腾讯地图和百度地图估计没希望了</option>
                                     </select>
                                 </div>
-                                <span v-if="modalLineSearch.dataSource != 'AMap'">* 请自行解决 CORS 跨域问题</span>
+                                <span v-if="modalLineSearch.dataSource == 'chelaile'">* 请自行解决 CORS 跨域问题</span>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                                <button type="button" id="modalLineSearchOKAdvanced" class="btn btn-outline-primary" :disabled="modalLineSearch.dataSource == 'ChinaRailway'" @click="loadLineFromRealitySearch(true)" data-bs-dismiss="modal">高级搜索</button>
+                                <button type="button" id="modalLineSearchOKAdvanced" class="btn btn-outline-primary" :disabled="['ChinaRailway','Google'].includes(modalLineSearch.dataSource)" @click="loadLineFromRealitySearch(true)" data-bs-dismiss="modal">高级搜索</button>
                                 <button type="button" id="modalLineSearchOK" class="btn btn-primary" @click="loadLineFromRealitySearch(false)" data-bs-dismiss="modal">读取</button>
                             </div>
                         </div>
@@ -189,6 +210,27 @@
                                         <span v-text="item.name + ' (' + item.startSn + ' → ' + item.endSn + ')'"></span>
                                         <div class="btn-group btn-group-sm pull-right" role="group">
                                             <button type="button" class="btn btn-outline-primary" @click="getLineFromChelaileAdvancedSelect(index)" data-bs-dismiss="modal">读取</button>
+                                        </div>
+                                    </li>
+                                    <li v-if="modalLineSearch.dataSource == 'AT'" v-for="route in modalLineSearchAdvanced.data" class="list-group-item">
+                                        <div class="d-flex flex-wrap align-items-center justify-content-between mb-2">
+                                            <div><strong>{{ route.route_short_name || route.route_long_name || route.route_id }}</strong><span class="text-muted ms-2">{{ route.route_long_name || '' }}</span><div class="small text-muted">route_id: {{ route.route_id }} · {{ route.tripPatterns.length }} 种交路</div></div>
+                                        </div>
+                                        <div v-for="(pattern, patternIndex) in route.tripPatterns" class="border rounded p-2 mb-2">
+                                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-2">
+                                                <div class="flex-grow-1">
+                                                    <div><strong>方向 {{ pattern.directionId }}</strong> · {{ pattern.headsign }}</div>
+                                                    <div class="small text-muted">{{ pattern.stopCount }} 站 · {{ pattern.tripCount }} 个班次 · shape: {{ pattern.shapeId || '无' }}</div>
+                                                    <div class="small text-muted">服务日：{{ pattern.serviceIds.join('、') }}</div>
+                                                    <details class="small mt-2">
+                                                        <summary>查看完整站序（{{ pattern.stopNames.length }} 站）</summary>
+                                                        <ol class="mt-2 mb-0 ps-3">
+                                                            <li v-for="(stopName, stopIndex) in pattern.stopNames" :key="stopIndex">{{ stopName }}</li>
+                                                        </ol>
+                                                    </details>
+                                                </div>
+                                                <button type="button" class="btn btn-sm btn-outline-primary" @click="importATGtfsPattern(route.route_id, patternIndex)" data-bs-dismiss="modal">导入此交路</button>
+                                            </div>
                                         </div>
                                     </li>
                                 </div>
@@ -285,7 +327,7 @@
             </main>
             <footer class="footer mt-auto py-3 bg-light">
                 <div class="container">
-                    <span class="text-muted font-monospace">Version 2.1.6 Beta. Created by <a class="text-reset" href="https://space.bilibili.com/273163717" target="_blank">BobLiu</a> & <a class="text-reset" href="https://github.com/BusLineDesigner/BusLineDesigner/graphs/contributors" target="_blank">Contributors</a>.</span>
+                    <span class="text-muted font-monospace">Version 2.1.12 Beta. Created by <a class="text-reset" href="https://space.bilibili.com/273163717" target="_blank">BobLiu</a> & <a class="text-reset" href="https://github.com/BusLineDesigner/BusLineDesigner/graphs/contributors" target="_blank">Contributors</a>.</span>
                     &emsp;
                     <span class="text-muted"><a class="text-reset" href="https://beian.miit.gov.cn/">沪ICP备20015150号-2</a></span>
                     <span class="text-muted" style="float: right;">友情链接:&emsp;<a class="text-reset" href="https://ccbus.huijiwiki.com/" target="_blank">长春交通百科</a>&emsp;<a class="text-reset" href="https://railmapgen.github.io/?utm_source=BusLineDesigner" target="_blank">地铁线路图工具包</a></span>

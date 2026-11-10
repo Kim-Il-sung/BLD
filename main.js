@@ -1,3 +1,4 @@
+const BLDAtGtfsCache = new WeakMap();
 const bld = Vue.createApp({
     setup() {
         const blankLineFile = {
@@ -105,8 +106,42 @@ const bld = Vue.createApp({
                             }
                         },
                     },
+                    routingProvider: {
+                        name: '算路 API', current: 'AMap', default: 'AMap', type: 'select',
+                        options: [
+                            {name: '高德（国内）', value: 'AMap'},
+                            {name: 'HERE（境外公交车辆模式，Beta）', value: 'HERE'},
+                            {name: 'OpenStreetMap / OpenRouteService', value: 'ORS'}
+                        ],
+                        description: 'HERE bus 模式目前为 Beta；ORS 使用 OSM 道路数据。此项控制自动算路，不改变当前地图底图。'
+                    },
+                    hereKey: { name: 'HERE API Key', current: '', default: '', type: 'password', placeholder: 'HERE Platform API Key', description: '同一 HERE Platform App API Key 用于 Routing API v8、Geocoding & Search API v7 和 Vector Tile API v2（最近道路几何匹配）；请确认账户已开通对应服务。' },
+                    stationSearchProvider: { name: '站点周边识别 API', current: 'AUTO', default: 'AUTO', type: 'select', options: [{name: '自动（HERE 算路时使用 HERE 搜索，否则使用高德）', value: 'AUTO'}, {name: '高德周边搜索', value: 'AMap'}, {name: 'HERE Browse（公交站）', value: 'HERE'}], description: 'HERE 模式调用 Browse API 搜索 200 米内的 Bus Stop / Bus Station；不改变底图和算路服务。' },
+                    orsKey: { name: 'OpenRouteService API Key', current: '', default: '', type: 'password', placeholder: 'OpenRouteService API Key', description: '用于 OSM 道路寻路；在 openrouteservice.org 注册获取。' },
+                    googleKey: { name: 'Google Maps API Key', current: '', default: '', type: 'password', placeholder: 'Google Maps JavaScript API Key', description: '用于 Google Transit 起终点查询；需启用 Maps JavaScript API 与 Directions 服务及计费。' },
+                    atKey: { name: 'AT API Key（可选）', current: '', default: '', type: 'password', placeholder: 'Auckland Transport Subscription Key', description: '本版 AT 静态线路读取采用官方 GTFS ZIP 本地导入；此 Key 为后续 AT REST/Realtime 接口预留。' },
+                    mapServiceRegion: {
+                        name: '地图服务区域',
+                        current: 'domestic',
+                        default: 'domestic',
+                        type: 'select',
+                        options: [
+                            {name: '中国大陆（默认）', value: 'domestic'},
+                            {name: '境外（新加坡节点）', value: 'oversea_sg'},
+                            {name: '境外（德国节点）', value: 'oversea_de'},
+                        ],
+                        description: '境外模式需提前申请高德 JSAPI 世界地图权限；修改后请刷新页面。',
+                    },
                 },
                 map: {
+                    baseLayerProvider: {
+                        name: '地图底图服务', current: 'AMap', default: 'AMap', type: 'select',
+                        options: [
+                            {name: '高德地图底图', value: 'AMap'},
+                            {name: 'OpenStreetMap（OSM）', value: 'OSM'}
+                        ],
+                        description: '只切换道路底图，不改变地图交互和算路 API。OSM 模式仍使用当前地图组件承载站点与线路覆盖物。'
+                    },
                     showStationName: {
                         name: '在地图上显示站名',
                         current: '1',
@@ -302,6 +337,8 @@ const bld = Vue.createApp({
                     province: '',
                     city: '',
                 },
+                google: { origin: '', destination: '' },
+                atGtfsFile: null,
                 chinaRailway: {
                     trainCode: '',
                     date: new Date().getFullYear().toString() + (new Date().getMonth() + 1).toString().padStart(2, '0') + new Date().getDate().toString().padStart(2, '0'),
@@ -310,7 +347,8 @@ const bld = Vue.createApp({
                 CitiesLoadingPrompt: '正在加载列表…'
             },
             modalLineSearchAdvanced: {
-                data: []
+                data: [],
+                kind: 'default'
             },
             toast: {
                 title: '',
@@ -433,7 +471,7 @@ const bld = Vue.createApp({
             this.showModalConfirm("读取线路", "确定读取线路吗？现有线路内容将丢失，请确保已保存当前线路哦~", this.showModalLineSearch);
         },
         loadLineFromRealitySearch(advanced = false){
-            if(!this.modalLineSearch.lineName && this.modalLineSearch.dataSource != "ChinaRailway"){
+            if(!this.modalLineSearch.lineName && !['ChinaRailway','AT','Google'].includes(this.modalLineSearch.dataSource)){
                 this.showMessage(["读取线路", "", "读取线路失败: 未填写线路名称"]);
                 return;
             }
@@ -455,7 +493,172 @@ const bld = Vue.createApp({
                 }
             }else if(this.modalLineSearch.dataSource == "ChinaRailway"){
                 getContents("https://mobile.12306.cn/wxxcx/alipay/main/travelServiceQrcodeTrainInfo", this.getLineStationsFromChinaRailway, "POST", "application/x-www-form-urlencoded", "startDay=" + this.modalLineSearch.chinaRailway.date + "&trainCode=" + this.modalLineSearch.chinaRailway.trainCode);
+            }else if(this.modalLineSearch.dataSource == 'AT'){
+                this.searchATGtfs(advanced);
+            }else if(this.modalLineSearch.dataSource == 'Google'){
+                this.importGoogleTransit();
             }
+        },
+        selectATGtfsFile(event){ this.modalLineSearch.atGtfsFile = event.target.files && event.target.files[0] || null; },
+        async searchATGtfs(advanced = false){
+            try{
+                if(!this.modalLineSearch.atGtfsFile) throw new Error('请先选择从 AT 官方下载的 GTFS ZIP 文件');
+                if(typeof JSZip === 'undefined') throw new Error('GTFS ZIP 解析库未加载，请检查网络后刷新页面');
+                const query = (this.modalLineSearch.lineName || '').trim().toLocaleLowerCase();
+                if(!query) throw new Error('请输入线路编号或名称');
+                this.showMessage(['AT GTFS 搜索','','正在读取线路目录和交路信息…',false]);
+                const zip = await JSZip.loadAsync(this.modalLineSearch.atGtfsFile);
+                const readText = async name => { const f = zip.file(name); if(!f) throw new Error('GTFS 文件缺少 ' + name); return f.async('text'); };
+                const [routesText, tripsText, stopsText] = await Promise.all([readText('routes.txt'), readText('trips.txt'), readText('stops.txt')]);
+                const routes = BLDInternational.parseCsv(routesText);
+                const trips = BLDInternational.parseCsv(tripsText);
+                const stopNameMap = new Map(BLDInternational.parseCsv(stopsText).map(stop => [stop.stop_id, stop.stop_name || stop.stop_id]));
+                const searchable = r => [r.route_short_name, r.route_long_name, r.route_id].some(v => (v || '').trim().toLocaleLowerCase().includes(query));
+                const allMatches = routes.filter(searchable);
+                if(!allMatches.length) throw new Error('AT GTFS 中没有找到相关线路');
+                const exactMatches = allMatches.filter(r => [r.route_short_name, r.route_id].some(v => (v || '').trim().toLocaleLowerCase() === query));
+                const scopedRoutes = (!advanced && exactMatches.length) ? exactMatches : allMatches;
+                const score = r => {
+                    const vals = [r.route_short_name, r.route_id, r.route_long_name].map(v => (v || '').trim().toLocaleLowerCase());
+                    if(vals[0] === query || vals[1] === query) return 0;
+                    if(vals.some(v => v.startsWith(query))) return 1;
+                    return 2;
+                };
+                scopedRoutes.sort((a,b) => score(a)-score(b) || String(a.route_short_name).localeCompare(String(b.route_short_name), undefined, {numeric:true}) || String(a.route_id).localeCompare(String(b.route_id)));
+                const routeIds = new Set(scopedRoutes.map(r => r.route_id));
+                const candidateTrips = trips.filter(t => routeIds.has(t.route_id));
+                if(!candidateTrips.length) throw new Error('匹配线路没有可用的 trips 数据');
+                const tripIds = new Set(candidateTrips.map(t => t.trip_id));
+                this.showMessage(['AT GTFS 搜索','','正在扫描 stop_times.txt 并整理不同交路（大型文件可能需要一些时间）…',false]);
+                const stopTimesText = await readText('stop_times.txt');
+                const selectedRows = await BLDInternational.selectCsvRowsByFirstColumn(stopTimesText, tripIds, scanned => {
+                    this.showMessage(['AT GTFS 搜索','','正在读取站序记录：已扫描 ' + scanned.toLocaleString() + ' 行…',false]);
+                });
+                const stopTimesByTrip = new Map();
+                selectedRows.forEach(row => {
+                    if(!stopTimesByTrip.has(row.trip_id)) stopTimesByTrip.set(row.trip_id, []);
+                    stopTimesByTrip.get(row.trip_id).push(row);
+                });
+                const tripsByRoute = new Map();
+                candidateTrips.forEach(t => {
+                    if(!tripsByRoute.has(t.route_id)) tripsByRoute.set(t.route_id, []);
+                    tripsByRoute.get(t.route_id).push(t);
+                });
+                const routeResults = scopedRoutes.map(route => {
+                    const patternMap = new Map();
+                    (tripsByRoute.get(route.route_id) || []).forEach(trip => {
+                        const times = stopTimesByTrip.get(trip.trip_id) || [];
+                        times.sort((a,b) => Number(a.stop_sequence)-Number(b.stop_sequence));
+                        if(times.length < 2) return;
+                        const stopSequence = times.map(x => x.stop_id).join('\u001f');
+                        const directionId = trip.direction_id || '0';
+                        const headsign = trip.trip_headsign || '未标注终点';
+                        const shapeId = trip.shape_id || '';
+                        const key = [directionId, shapeId, headsign, stopSequence].join('\u001e');
+                        let pattern = patternMap.get(key);
+                        if(!pattern){
+                            pattern = {
+                                directionId,
+                                shapeId,
+                                headsign,
+                                stopCount: times.length,
+                                representativeTripId: trip.trip_id,
+                                tripCount: 0,
+                                serviceIds: [],
+                                firstDeparture: times[0].departure_time || times[0].arrival_time || ''
+                            };
+                            patternMap.set(key, pattern);
+                        }
+                        pattern.tripCount++;
+                        if(trip.service_id && !pattern.serviceIds.includes(trip.service_id)) pattern.serviceIds.push(trip.service_id);
+                    });
+                    const tripPatterns = Array.from(patternMap.values()).sort((a,b) => Number(a.directionId)-Number(b.directionId) || a.headsign.localeCompare(b.headsign));
+                    tripPatterns.forEach(p => {
+                        p.serviceIds.sort();
+                        p.stopNames = (stopTimesByTrip.get(p.representativeTripId) || []).slice().sort((a,b) => Number(a.stop_sequence)-Number(b.stop_sequence)).map(row => stopNameMap.get(row.stop_id) || row.stop_id);
+                    });
+                    return {...route, tripPatterns};
+                }).filter(r => r.tripPatterns.length);
+                if(!routeResults.length) throw new Error('匹配线路没有找到有效的站序交路');
+                BLDAtGtfsCache.set(this, {zip, stopTimesByTrip, routes: routeResults});
+                this.modalLineSearchAdvanced.kind = 'AT';
+                this.modalLineSearchAdvanced.data = routeResults;
+                const modal = new bootstrap.Modal(document.getElementById('modalLineSearchAdvanced'));
+                modal.show();
+                const exactNote = (!advanced && exactMatches.length) ? '已优先采用完整线路编号匹配。' : '已按相关线路进行搜索。';
+                this.showMessage(['AT GTFS 搜索','','找到 ' + routeResults.length + ' 条线路、' + routeResults.reduce((n,r)=>n+r.tripPatterns.length,0) + ' 种交路。' + exactNote]);
+            }catch(e){
+                console.error(e);
+                this.showMessage(['AT GTFS 搜索','','搜索失败：' + (e.message || e),false]);
+            }
+        },
+        async importATGtfsPattern(routeId, patternIndex){
+            try{
+                const cache = BLDAtGtfsCache.get(this);
+                if(!cache) throw new Error('GTFS 搜索缓存已失效，请重新搜索线路');
+                const route = cache.routes.find(r => r.route_id === routeId);
+                const pattern = route && route.tripPatterns[patternIndex];
+                if(!route || !pattern) throw new Error('没有找到所选交路，请重新搜索');
+                const times = cache.stopTimesByTrip.get(pattern.representativeTripId) || [];
+                if(times.length < 2) throw new Error('所选交路没有足够的站序数据');
+                const zip = cache.zip;
+                this.showMessage(['AT GTFS 导入','','正在读取站点和原始轨迹…',false]);
+                const [stopsText, shapesText, agenciesText] = await Promise.all([
+                    zip.file('stops.txt').async('text'),
+                    zip.file('shapes.txt') ? zip.file('shapes.txt').async('text') : Promise.resolve(''),
+                    zip.file('agency.txt') ? zip.file('agency.txt').async('text') : Promise.resolve('')
+                ]);
+                const stops = BLDInternational.parseCsv(stopsText);
+                const stopMap = new Map(stops.map(st => [st.stop_id, st]));
+                let shapeRows = [];
+                if(pattern.shapeId && shapesText){
+                    shapeRows = await BLDInternational.selectCsvRowsByFirstColumn(shapesText, new Set([pattern.shapeId]), scanned => {
+                        this.showMessage(['AT GTFS 导入','','正在筛选 shape 原始轨迹点：已扫描 ' + scanned.toLocaleString() + ' 行…',false]);
+                    });
+                    shapeRows.sort((a,b) => Number(a.shape_pt_sequence)-Number(b.shape_pt_sequence));
+                }
+                const built = BLDInternational.buildGtfsRouteNodes(times, stopMap, shapeRows);
+                const stationCount = built.nodes.filter(n => n.type === 'station').length;
+                if(stationCount < 2) throw new Error('所选交路有效站点不足，无法导入');
+                const agencies = agenciesText ? BLDInternational.parseCsv(agenciesText) : [];
+                const agency = agencies.find(a => a.agency_id === route.agency_id);
+                const rawColor = (route.route_color || '').replace('#','');
+                const routeColor = /^[0-9a-fA-F]{6}$/.test(rawColor) ? '#' + rawColor : '#00D3FC';
+                const newLine = deepClone(this.blankLineFile);
+                newLine.cityName = 'Auckland';
+                newLine.lineName = route.route_short_name || route.route_long_name || route.route_id;
+                newLine.company = agency?.agency_name || route.agency_id || 'Auckland Transport';
+                newLine.lineColor = routeColor;
+                newLine.lineType = 2;
+                newLine.route.up = built.nodes;
+                newLine.route.down = [];
+                newLine.remark = 'AT GTFS | direction_id=' + pattern.directionId + ' | ' + pattern.headsign + ' | shape_id=' + (pattern.shapeId || '无');
+                this.saveOriginal();
+                this.lineFile = newLine;
+                this.loadLine();
+                const geometryLabel = built.geometryMethod === 'shape_dist_traveled' ? '按 GTFS shape_dist_traveled 精确切分轨迹' : built.geometryMethod === 'forward-projection-fallback' ? '按站点顺序投影到原始轨迹' : '该交路没有可用 shape，当前仅导入站点';
+                this.showMessage(['AT GTFS 导入成功','',`${newLine.lineName} · ${pattern.headsign}；${stationCount} 站、${built.waypointCount} 个原始轨迹点；${pattern.tripCount} 个相同交路班次。${geometryLabel}`]);
+            }catch(e){
+                console.error(e);
+                this.showMessage(['AT GTFS 导入失败','',e.message || String(e),false]);
+            }
+        },
+        async importGoogleTransit(){
+            try{
+                const key=this.settings.general.googleKey.current.trim(); if(!key) throw new Error('请先在设置中填写 Google Maps API Key');
+                const {origin,destination}=this.modalLineSearch.google; if(!origin||!destination) throw new Error('请填写起点和终点');
+                if(!window.google?.maps?.DirectionsService){ await new Promise((resolve,reject)=>{const sc=document.createElement('script');sc.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&v=weekly';sc.onload=resolve;sc.onerror=()=>reject(new Error('Google Maps JavaScript API 加载失败'));document.head.appendChild(sc);}); }
+                const service=new google.maps.DirectionsService(); const result=await service.route({origin,destination,travelMode:google.maps.TravelMode.TRANSIT,provideRouteAlternatives:true});
+                const route=result.routes?.[0]; if(!route) throw new Error('Google Transit 没有返回可用方案');
+                const busSteps=[]; route.legs.forEach(leg=>leg.steps.forEach(step=>{if(step.travel_mode==='TRANSIT'&&step.transit?.line?.vehicle?.type==='BUS') busSteps.push(step);}));
+                if(!busSteps.length) throw new Error('该出行方案没有公交路段；请更换起终点或确认 Google Transit 在该地区有数据');
+                const step=busSteps[0], td=step.transit; const pts=step.path||[];
+                this.lineFile=deepClone(this.blankLineFile); this.lineFile.cityName=''; this.lineFile.lineName=td.line.short_name||td.line.name||this.modalLineSearch.lineName||'Google Transit Bus'; this.lineFile.company=(td.line.agencies||[]).map(a=>a.name).join(', '); this.lineFile.lineType=2;
+                const start=td.departure_stop, end=td.arrival_stop; const nodes=[{type:'station',name:start.name,lng:start.location.lng(),lat:start.location.lat()}];
+                pts.forEach(p=>{const lng=p.lng(),lat=p.lat();if(Math.abs(lng-nodes[nodes.length-1].lng)>0.00002||Math.abs(lat-nodes[nodes.length-1].lat)>0.00002)nodes.push({type:'waypoint',name:'Google 路径点',lng,lat});});
+                nodes.push({type:'station',name:end.name,lng:end.location.lng(),lat:end.location.lat()}); this.lineFile.route.up=nodes;
+                this.showMessage(['读取线路','','Google Transit 导入成功：'+this.lineFile.lineName+'。注意：这是起终点查询返回的一段公交行程，不代表该线路完整的双向站点清单。']); this.$refs.tabStation.loadMapLine(true);
+            }catch(e){console.error(e);this.showMessage(['读取线路','','Google Transit 读取失败：'+e.message,false]);}
         },
         getLineFromAmapAdvanced(status, result){
             if(status != "complete"){
@@ -857,6 +1060,43 @@ const bld = Vue.createApp({
             }
             this.loadLine();
             this.showMessage(["读取线路", "", "读取剪贴板中的线路成功~"]);
+        },
+        async copyDirectionRoute(direction){
+            try{
+                const route = deepClone(this.lineFile.route?.[direction] || []);
+                if(!route.length) throw new Error((direction === 'up' ? '上行' : '下行') + '没有可复制的数据');
+                const payload = { format: 'BLD_DIRECTION_ROUTE', version: 1, sourceDirection: direction, route };
+                await navigator.clipboard.writeText(JSON.stringify(payload));
+                this.showMessage(['复制方向数据','','已复制' + (direction === 'up' ? '上行' : '下行') + '数据（' + route.filter(n=>n.type==='station').length + '站）。可在另一条线路中选择“读取为下行”。']);
+            }catch(e){
+                console.error(e);
+                this.showMessage(['复制方向数据失败','',e.message || '浏览器未授予剪贴板写入权限，请使用 HTTPS 页面或检查浏览器权限。',false]);
+            }
+        },
+        readDirectionAsDown(){
+            const run = async () => {
+                try{
+                    const text = await navigator.clipboard.readText();
+                    const payload = JSON.parse(text);
+                    let route = null;
+                    if(payload?.format === 'BLD_DIRECTION_ROUTE' && Array.isArray(payload.route)) route = payload.route;
+                    else if(Array.isArray(payload)) route = payload;
+                    if(!route || !route.length) throw new Error('剪贴板中没有有效的 BLD 单方向线路数据；请先在来源线路中复制上行或下行数据');
+                    const valid = route.every(n => n && (n.type === 'station' || n.type === 'waypoint') && Number.isFinite(Number(n.lng)) && Number.isFinite(Number(n.lat)) && Number(n.lng) >= -180 && Number(n.lng) <= 180 && Number(n.lat) >= -90 && Number(n.lat) <= 90);
+                    if(!valid) throw new Error('剪贴板数据格式不正确，节点类型或经纬度无效');
+                    this.saveOriginal();
+                    this.lineFile.route.down = deepClone(route).map(n => ({...n, lng:Number(n.lng), lat:Number(n.lat)}));
+                    if(Number(this.lineFile.lineType || 1) % 2 === 0) this.lineFile.lineType = Math.max(1, Number(this.lineFile.lineType) - 1);
+                    this.$refs.tabStation.loadLine();
+                    this.$refs.tabStation.selectedDirection = 'down';
+                    this.$refs.tabStation.loadMapLine(true, true);
+                    this.showMessage(['读取为下行成功','','已将剪贴板中的 ' + route.filter(n=>n.type==='station').length + ' 个站点及途经点覆盖到当前线路下行；上行数据保持不变。']);
+                }catch(e){
+                    console.error(e);
+                    this.showMessage(['读取为下行失败','',e.message || '浏览器未授予剪贴板读取权限，请检查页面 HTTPS 和浏览器权限。',false]);
+                }
+            };
+            this.showModalConfirm('读取为下行线路','确定读取剪贴板中的单方向线路数据，并覆盖当前线路的下行吗？当前上行数据不会改变。',run);
         },
         newLine() {
             this.showModalConfirm("新建线路", "确定新建线路吗？现有线路内容将丢失，请确保已保存当前线路哦~", this.loadBlankLine);
