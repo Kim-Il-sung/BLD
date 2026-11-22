@@ -1,7 +1,18 @@
-# Bus Line Designer 2.1.12 Beta
+# Bus Line Designer 2.1.13 Beta
 
-BLD 2.1.12 优化 HERE 自动算路的终点道路吸附：优先通过 HERE Vector Tile API v2 的 `roads` 图层计算点击位置到道路折线的最近投影点，再使用该坐标调用 HERE Routing API v8（bus 模式）。不再使用 `snapRadius`、`radius` 或 `radiusPenalty` 影响候选道路选择。
+本版本在 2.1.12 的 HERE 最近道路吸附基础上，修复站名异步更新、Safari 大型 AT GTFS 重复导入内存占用，并增加线网站点吸附及站序片段复制/粘贴。
 
-若 Vector Tile API 不可用，或最近道路无法完成公交模式路线计算，则自动回退到 HERE 原生 waypoint 匹配。
+## 本次更新
 
-详细说明见 `BLD-2.1.12-HERE最近道路吸附优化.md`。
+- 站名异步识别结果现在更新插入后的 Vue 响应式节点对象，修复重命名输入框不能同步显示自动站名的问题。
+- AT GTFS 的 `stop_times.txt` 和 `shapes.txt` 改为 ZIP 内部流式读取，避免一次性解压成超大字符串；搜索完成后仅在 ZIP 缓存中保留导入所需的 shapes.txt 和 agency.txt，减少 Safari/WebKit 的内存峰值。
+- 线网弹窗中每条线路增加“吸附上行”和“吸附下行”。启用后，该方向站点以灰色中心显示；当前线路新建站点时，25 米内自动吸附到最近的已启用线网站点。
+- 地图下方线网按钮右侧增加“复制站序”和“粘贴站序”。复制时依次选择起点站、终点站；复制范围包含两端站点及中间途经点。粘贴时以当前选中站作为连接点，不重复插入片段的第一个站点，并先清除当前站与后一站之间原有途经点。
+
+## HERE 最近道路吸附
+
+保留 2.1.12 的 HERE Vector Tile 最近道路投影匹配与公交路由回退逻辑。若 Vector Tile API 不可用或最近道路无法完成公交模式路线计算，仍会回退到 HERE 原生 waypoint 匹配。
+
+## 测试范围与限制
+
+本次执行 JavaScript 语法检查、GTFS 流式 CSV 解析模拟测试、站序片段边界逻辑检查及 ZIP 完整性检查。未在真实 Safari 设备上完成长时间重复导入压力测试，也未使用用户 HERE Key 做在线验证。浏览器实际内存占用仍受 GTFS 文件规模和设备内存影响。

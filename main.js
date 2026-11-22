@@ -499,8 +499,23 @@ const bld = Vue.createApp({
                 this.importGoogleTransit();
             }
         },
-        selectATGtfsFile(event){ this.modalLineSearch.atGtfsFile = event.target.files && event.target.files[0] || null; },
+        selectATGtfsFile(event){
+            this.modalLineSearch.atGtfsFile = event.target.files && event.target.files[0] || null;
+            // Permit selecting the same ZIP again without retaining a stale
+            // input selection; the File object above remains valid.
+            if(event.target) event.target.value = '';
+        },
+        releaseATGtfsCache(){
+            const cache = BLDAtGtfsCache.get(this);
+            if(!cache) return;
+            try { cache.stopTimesByTrip?.clear(); cache.routes?.splice(0); cache.stopMap?.clear(); }
+            catch(e) {}
+            try { if(cache.zip?.files) Object.keys(cache.zip.files).forEach(name => cache.zip.remove(name)); }
+            catch(e) {}
+            BLDAtGtfsCache.delete(this);
+        },
         async searchATGtfs(advanced = false){
+            this.releaseATGtfsCache();
             try{
                 if(!this.modalLineSearch.atGtfsFile) throw new Error('请先选择从 AT 官方下载的 GTFS ZIP 文件');
                 if(typeof JSZip === 'undefined') throw new Error('GTFS ZIP 解析库未加载，请检查网络后刷新页面');
@@ -512,7 +527,9 @@ const bld = Vue.createApp({
                 const [routesText, tripsText, stopsText] = await Promise.all([readText('routes.txt'), readText('trips.txt'), readText('stops.txt')]);
                 const routes = BLDInternational.parseCsv(routesText);
                 const trips = BLDInternational.parseCsv(tripsText);
-                const stopNameMap = new Map(BLDInternational.parseCsv(stopsText).map(stop => [stop.stop_id, stop.stop_name || stop.stop_id]));
+                const parsedStops = BLDInternational.parseCsv(stopsText);
+                const stopMap = new Map(parsedStops.map(stop => [stop.stop_id, stop]));
+                const stopNameMap = new Map(parsedStops.map(stop => [stop.stop_id, stop.stop_name || stop.stop_id]));
                 const searchable = r => [r.route_short_name, r.route_long_name, r.route_id].some(v => (v || '').trim().toLocaleLowerCase().includes(query));
                 const allMatches = routes.filter(searchable);
                 if(!allMatches.length) throw new Error('AT GTFS 中没有找到相关线路');
@@ -530,15 +547,17 @@ const bld = Vue.createApp({
                 if(!candidateTrips.length) throw new Error('匹配线路没有可用的 trips 数据');
                 const tripIds = new Set(candidateTrips.map(t => t.trip_id));
                 this.showMessage(['AT GTFS 搜索','','正在扫描 stop_times.txt 并整理不同交路（大型文件可能需要一些时间）…',false]);
-                const stopTimesText = await readText('stop_times.txt');
-                const selectedRows = await BLDInternational.selectCsvRowsByFirstColumn(stopTimesText, tripIds, scanned => {
-                    this.showMessage(['AT GTFS 搜索','','正在读取站序记录：已扫描 ' + scanned.toLocaleString() + ' 行…',false]);
+                const stopTimesEntry = zip.file('stop_times.txt');
+                if(!stopTimesEntry) throw new Error('GTFS 文件缺少 stop_times.txt');
+                const selectedRows = await BLDInternational.selectCsvRowsByFirstColumnStream(stopTimesEntry, tripIds, scanned => {
+                    this.showMessage(['AT GTFS 搜索','','正在流式读取站序记录：已扫描 ' + scanned.toLocaleString() + ' 行…',false]);
                 });
                 const stopTimesByTrip = new Map();
                 selectedRows.forEach(row => {
                     if(!stopTimesByTrip.has(row.trip_id)) stopTimesByTrip.set(row.trip_id, []);
                     stopTimesByTrip.get(row.trip_id).push(row);
                 });
+                selectedRows.length = 0;
                 const tripsByRoute = new Map();
                 candidateTrips.forEach(t => {
                     if(!tripsByRoute.has(t.route_id)) tripsByRoute.set(t.route_id, []);
@@ -580,7 +599,14 @@ const bld = Vue.createApp({
                     return {...route, tripPatterns};
                 }).filter(r => r.tripPatterns.length);
                 if(!routeResults.length) throw new Error('匹配线路没有找到有效的站序交路');
-                BLDAtGtfsCache.set(this, {zip, stopTimesByTrip, routes: routeResults});
+                // Keep only the data required by the result dialog/importer.
+                // Retain only shapes.txt and agency.txt for later pattern imports;
+                // remove all other ZIP entries to lower Safari memory use.
+                Object.keys(zip.files).forEach(name => {
+                    if(name !== 'shapes.txt' && name !== 'agency.txt') zip.remove(name);
+                });
+                BLDAtGtfsCache.set(this, {zip, stopTimesByTrip, stopMap, routes: routeResults});
+                this.modalLineSearch.atGtfsFile = null;
                 this.modalLineSearchAdvanced.kind = 'AT';
                 this.modalLineSearchAdvanced.data = routeResults;
                 const modal = new bootstrap.Modal(document.getElementById('modalLineSearchAdvanced'));
@@ -603,17 +629,15 @@ const bld = Vue.createApp({
                 if(times.length < 2) throw new Error('所选交路没有足够的站序数据');
                 const zip = cache.zip;
                 this.showMessage(['AT GTFS 导入','','正在读取站点和原始轨迹…',false]);
-                const [stopsText, shapesText, agenciesText] = await Promise.all([
-                    zip.file('stops.txt').async('text'),
-                    zip.file('shapes.txt') ? zip.file('shapes.txt').async('text') : Promise.resolve(''),
+                const [agenciesText] = await Promise.all([
                     zip.file('agency.txt') ? zip.file('agency.txt').async('text') : Promise.resolve('')
                 ]);
-                const stops = BLDInternational.parseCsv(stopsText);
-                const stopMap = new Map(stops.map(st => [st.stop_id, st]));
+                const stopMap = cache.stopMap;
                 let shapeRows = [];
-                if(pattern.shapeId && shapesText){
-                    shapeRows = await BLDInternational.selectCsvRowsByFirstColumn(shapesText, new Set([pattern.shapeId]), scanned => {
-                        this.showMessage(['AT GTFS 导入','','正在筛选 shape 原始轨迹点：已扫描 ' + scanned.toLocaleString() + ' 行…',false]);
+                const shapesEntry = zip.file('shapes.txt');
+                if(pattern.shapeId && shapesEntry){
+                    shapeRows = await BLDInternational.selectCsvRowsByFirstColumnStream(shapesEntry, new Set([pattern.shapeId]), scanned => {
+                        this.showMessage(['AT GTFS 导入','','正在流式筛选 shape 原始轨迹点：已扫描 ' + scanned.toLocaleString() + ' 行…',false]);
                     });
                     shapeRows.sort((a,b) => Number(a.shape_pt_sequence)-Number(b.shape_pt_sequence));
                 }

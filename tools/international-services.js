@@ -34,6 +34,55 @@
     fields.push(field);
     return fields;
   };
+  // Stream large GTFS CSV entries (especially stop_times.txt) in small
+  // chunks. This avoids creating a second full-size decompressed string in
+  // Safari/WebKit, which can otherwise terminate the tab after repeated imports.
+  BLDInternational.selectCsvRowsByFirstColumnStream = function (zipEntry, wantedIds, onProgress) {
+    return new Promise((resolve, reject) => {
+      if (!zipEntry || typeof zipEntry.internalStream !== 'function') {
+        reject(new Error('当前 ZIP 解析器不支持流式读取')); return;
+      }
+      const decoder = new TextDecoder('utf-8');
+      let carry = '', headers = null, scanned = 0;
+      const out = [];
+      const consumeLine = raw => {
+        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+        if (!headers) {
+          headers = BLDInternational.parseCsvLine(line.replace(/^\uFEFF/, ''));
+          return;
+        }
+        if (!line) return;
+        const comma = line.indexOf(',');
+        let first = comma < 0 ? line : line.slice(0, comma);
+        if (first.length >= 2 && first[0] === '"' && first[first.length - 1] === '"') first = first.slice(1, -1).replace(/""/g, '"');
+        if (wantedIds.has(first)) {
+          const values = BLDInternational.parseCsvLine(line);
+          const obj = {}; headers.forEach((h, i) => { obj[h] = values[i] ?? ''; }); out.push(obj);
+        }
+        scanned++;
+        if (scanned % 200000 === 0 && onProgress) onProgress(scanned);
+      };
+      const stream = zipEntry.internalStream('uint8array');
+      stream.on('data', chunk => {
+        try {
+          const text = decoder.decode(chunk, { stream: true });
+          const parts = (carry + text).split('\n');
+          carry = parts.pop() || '';
+          for (const line of parts) consumeLine(line);
+        } catch (e) { try { stream.pause(); } catch (_) {} reject(e); }
+      });
+      stream.on('error', reject);
+      stream.on('end', () => {
+        try {
+          carry += decoder.decode();
+          if (carry) consumeLine(carry);
+          if (onProgress) onProgress(scanned);
+          resolve(out);
+        } catch (e) { reject(e); }
+      });
+      stream.resume();
+    });
+  };
   // Read only records whose first column matches a set of IDs. This avoids
   // materializing nearly one million stop_times objects in the browser.
   BLDInternational.selectCsvRowsByFirstColumn = async function (text, wantedIds, onProgress) {

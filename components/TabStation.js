@@ -69,9 +69,10 @@ bld.component('tab-station', {
                     <div class="modal-body form-control" style="border: 0px; padding: 0px; overflow-y:auto; overflow-x:hidden;">
                         <div class="list-group list-group-flush">
                             <li v-if="!mapItems.lineMap.length" class="list-group-item list-group-item-action">点击“添加当前线路”即可将当前线路添加至线网中</li>
-                            <li v-for="(lineMapLine, index) in mapItems.lineMap" class="list-group-item list-group-item-action d-flex align-content-center justify-content-between">
-                                <span class="align-self-center">{{ lineMapLine.data.lineFile.lineName?lineMapLine.data.lineFile.lineName:'未命名线路' }}</span>
-                                <div class="btn-group btn-group-sm pull-right" role="group">
+                            <li v-for="(lineMapLine, index) in mapItems.lineMap" class="list-group-item list-group-item-action">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <span class="align-self-center">{{ lineMapLine.data.lineFile.lineName?lineMapLine.data.lineFile.lineName:'未命名线路' }}</span>
+                                    <div class="btn-group btn-group-sm pull-right" role="group">
                                     <button type="button" class="btn btn-outline-primary" @click="editLineOfLineMap(index)" data-bs-dismiss="modal">编辑</button>
                                     <button type="button" class="btn btn-outline-primary" :class="{ active: lineMapLine.config.showStations, disabled: (!lineMapLine.figure.stationsUp) && (!lineMapLine.figure.stationsDown) }" @click="setShowStationsOfLineMap(index)">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-record-circle" viewBox="0 0 16 16">
@@ -87,6 +88,11 @@ bld.component('tab-station', {
                                             <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
                                         </svg>
                                     </button>
+                                    </div>
+                                </div>
+                                <div class="d-flex flex-wrap gap-3 mt-2 small">
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" :disabled="!lineMapLine.data.lineFile.route.up.some(n => n.type === 'station')" v-model="lineMapLine.config.snapUp" @change="setSnapStationsOfLineMap(index, 'up')">{{ settings.general.mainDirection.current!="1"?"吸附上行":"吸附下行" }}</label>
+                                    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" :disabled="!lineMapLine.data.lineFile.route.down.some(n => n.type === 'station')" v-model="lineMapLine.config.snapDown" @change="setSnapStationsOfLineMap(index, 'down')">{{ settings.general.mainDirection.current!="1"?"吸附下行":"吸附上行" }}</label>
                                 </div>
                             </li>
                         </div>
@@ -308,6 +314,8 @@ bld.component('tab-station', {
                                     <path d="M372.350001 0v279.259092h240.629159A139.984074 139.984074 0 0 1 698.147729 194.090523V0h93.090909v194.13143a139.970438 139.970438 0 0 1 85.168569 85.182204h147.53825v93.090909H876.3663a140.065888 140.065888 0 0 1-85.086755 85.127662v54.542791A232.720455 232.720455 0 0 1 568.6086 744.509102l-10.104053 0.231806H457.477662a139.99771 139.99771 0 0 1-85.086754 85.127662v194.13143h-93.131816V829.86857a139.970438 139.970438 0 0 1-85.127662-85.182204H0v-93.077274h194.090523a140.011345 140.011345 0 0 1 85.168569-85.182204V372.350001H0V279.259092h279.259092V0z m-46.552273 651.609092A46.538637 46.538637 0 1 0 372.336365 698.147729a46.525001 46.525001 0 0 0-46.538637-46.538637z m287.222339-279.259091h-240.670066v194.13143a139.984074 139.984074 0 0 1 85.168568 85.168568h100.999614a139.643181 139.643181 0 0 0 139.397739-131.448127l0.231807-8.181418v-54.501885a140.024981 140.024981 0 0 1-85.127662-85.168568z m131.666299-93.090909a46.552272 46.552272 0 1 0 46.538636 46.538636 46.552272 46.552272 0 0 0-46.538636-46.538636z"></path>
                                 </svg>
                             </button>
+                            <button type="button" class="btn btn-outline-primary" :class="{ active: copySequenceMode }" @click="startCopyStationSequence()" title="复制站序：依次点击起点站和终点站">复制站序</button>
+                            <button type="button" class="btn btn-outline-primary" :disabled="!stationSequenceClipboard.length" @click="pasteStationSequence()" title="粘贴站序到当前站后方">粘贴站序</button>
                         </div>
                         <div class="btn-group btn-group-sm pull-right" role="group" style="float: right">
                             <button type="button" class="btn btn-outline-primary" :class="{ active: selectedMapTool == 'watch' }" @click="setMapTool('watch')" title="看图模式 [1]">
@@ -380,6 +388,9 @@ bld.component('tab-station', {
             fileReader: VueReactivity.shallowRef(null),
             chrome: true,
             routeSearchResultGot: false,
+            copySequenceMode: false,
+            copySequenceFirstIndex: null,
+            stationSequenceClipboard: [],
         }
     },
     methods: {
@@ -582,6 +593,10 @@ bld.component('tab-station', {
         // clickNode
         // 在地图上点击一个节点
         clickNode(e) {
+            if(this.copySequenceMode && e.target.getExtData() !== null){
+                this.selectSequenceEndpoint(e.target.getExtData());
+                return;
+            }
             if(e.target.getExtData() === null){
                 this.clickPoint(e.lnglat.lng, e.lnglat.lat);
             }else if(this.selectedMapTool == 'watch'){
@@ -670,6 +685,11 @@ bld.component('tab-station', {
         // 新建一个节点
         newNode(lng, lat) {
             this.saveOriginal();
+            let snappedStation = null;
+            if(this.selectedMapTool !== 'newWaypoint'){
+                snappedStation = this.findLineMapStationSnap(lng, lat);
+                if(snappedStation){ lng = snappedStation.lng; lat = snappedStation.lat; }
+            }
             // “自动规划”继承未完成的路径点
             if(this.selectedMapTool == 'newStationSmart'){
                 if(this.lastSelectedWayPoint !== null){
@@ -720,7 +740,14 @@ bld.component('tab-station', {
 
             // 添加节点
             this.line.route[this.trueDirection].splice(index, 0, newNode);
-            if (newNode.type === 'station') this.identifyStationName(lng, lat, newNode);
+            // Use the node obtained back from the reactive route array. Updating
+            // the raw object captured before insertion does not reliably notify
+            // Vue's v-model input after an asynchronous name lookup.
+            const insertedNode = this.line.route[this.trueDirection][index];
+            if (newNode.type === 'station') {
+                if(snappedStation) insertedNode.name = snappedStation.name || insertedNode.name;
+                else this.identifyStationName(lng, lat, insertedNode);
+            }
 
             // 设定新的选定点
             if(this.selectedMapMode == 'after'){
@@ -891,6 +918,7 @@ bld.component('tab-station', {
         // selectNode
         // 在节点列表中选中节点
         selectNode(index, setCenter = false) {
+            if(this.copySequenceMode){ this.selectSequenceEndpoint(index); return; }
             try{
                 this.mapItems.infoWindow.close();
             }catch(e){}
@@ -1047,9 +1075,8 @@ bld.component('tab-station', {
 
             if(this.renameEnabled){
                 this.saveOriginal();
-                if(this.nodes[this.selectedNode].name.indexOf("新站点 #") === 0 || this.nodes[this.selectedNode].name.indexOf("途经点 #") === 0){
-                    this.nodes[this.selectedNode].name = '';
-                }
+                const selected = this.nodes[this.selectedNode];
+                if(selected && (selected.name.indexOf("新站点 #") === 0 || selected.name.indexOf("途经点 #") === 0)) selected.name = '';
             }
 
             this.loadMapLine(false);
@@ -1214,12 +1241,16 @@ bld.component('tab-station', {
                     polylineUp: null,
                     polylineDown: null,
                     stationsUp: [],
-                    stationsDown: []
+                    stationsDown: [],
+                    snapStationsUp: [],
+                    snapStationsDown: []
                 },
                 config: {
                     showLineUp: false,
                     showLineDown: false,
-                    showStations: false
+                    showStations: false,
+                    snapUp: false,
+                    snapDown: false
                 }
             };
 
@@ -1272,6 +1303,9 @@ bld.component('tab-station', {
         // removeLineFromLineMap
         // 从线网中移除线路
         removeLineFromLineMap(index){
+            const snapLine = this.mapItems.lineMap[index];
+            try { if(snapLine.figure.snapStationsUp?.length) this.map.remove(snapLine.figure.snapStationsUp); } catch(e) {}
+            try { if(snapLine.figure.snapStationsDown?.length) this.map.remove(snapLine.figure.snapStationsDown); } catch(e) {}
             if(this.mapItems.lineMap[index].config.showLineUp){
                 this.map.remove(this.mapItems.lineMap[index].figure.polylineUp);
                 if(this.mapItems.lineMap[index].config.showStations){
@@ -1288,6 +1322,102 @@ bld.component('tab-station', {
             this.$forceUpdate();
         },
 
+        // Find the closest enabled network station within 25 metres.
+        findLineMapStationSnap(lng, lat){
+            const distance = (a,b) => {
+                const rad = Math.PI / 180, dLat = (b.lat-a.lat)*rad, dLng = (b.lng-a.lng)*rad;
+                const h = Math.sin(dLat/2)**2 + Math.cos(a.lat*rad)*Math.cos(b.lat*rad)*Math.sin(dLng/2)**2;
+                return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1-h));
+            };
+            let best = null, bestDistance = 25;
+            for(const line of this.mapItems.lineMap){
+                for(const direction of ['up','down']){
+                    if(!line.config['snap'+(direction === 'up' ? 'Up' : 'Down')]) continue;
+                    for(const node of (line.data.lineFile.route[direction] || [])){
+                        if(node.type !== 'station' || !Number.isFinite(Number(node.lng)) || !Number.isFinite(Number(node.lat))) continue;
+                        const d = distance({lng,lat},{lng:Number(node.lng),lat:Number(node.lat)});
+                        if(d <= bestDistance){ bestDistance = d; best = node; }
+                    }
+                }
+            }
+            return best;
+        },
+        setSnapStationsOfLineMap(index, direction){
+            const line = this.mapItems.lineMap[index];
+            if(!line) return;
+            const enabled = !!line.config[direction === 'up' ? 'snapUp' : 'snapDown'];
+            const figureKey = direction === 'up' ? 'snapStationsUp' : 'snapStationsDown';
+            const oldMarkers = line.figure[figureKey] || [];
+            try { if(oldMarkers.length) this.map.remove(oldMarkers); } catch(e) {}
+            line.figure[figureKey] = [];
+            if(enabled){
+                const grayIcon = 'data:image/svg+xml;base64,' + btoa("<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'><circle cx='9' cy='9' r='5.5' fill='#888888' stroke='#ffffff' stroke-width='2'/></svg>");
+                const markers = (line.data.lineFile.route[direction] || []).filter(node => node.type === 'station').map(node => new AMap.Marker({
+                    position: new AMap.LngLat(Number(node.lng), Number(node.lat)),
+                    zIndex: 26,
+                    offset: new AMap.Pixel(0, 0),
+                    anchor: 'center',
+                    icon: grayIcon,
+                    clickable: false
+                }));
+                line.figure[figureKey] = markers;
+                if(markers.length) this.map.add(markers);
+            }
+            this.$forceUpdate();
+        },
+        startCopyStationSequence(){
+            this.copySequenceMode = true;
+            this.copySequenceFirstIndex = null;
+            this.selectedMapTool = 'watch';
+            this.$emit('toast',['复制站序','','请依次点击要复制的起点站和终点站。',false]);
+        },
+        selectSequenceEndpoint(nodeId){
+            const index = this.nodes.findIndex((node,i) => (node.id === nodeId || i === nodeId) && node.type === 'station');
+            if(index < 0){ this.$emit('toast',['复制站序','','请选择站点，不能选择途经点。',false]); return; }
+            if(this.copySequenceFirstIndex === null){
+                this.copySequenceFirstIndex = index;
+                this.$emit('toast',['复制站序','','已选择起点站，请再选择终点站。']);
+                return;
+            }
+            if(index === this.copySequenceFirstIndex){
+                this.$emit('toast',['复制站序','','终点站不能与起点站相同，请重新选择。',false]); return;
+            }
+            const start = Math.min(this.copySequenceFirstIndex,index), end = Math.max(this.copySequenceFirstIndex,index);
+            this.stationSequenceClipboard = deepClone(this.nodes.slice(start,end+1));
+            this.copySequenceMode = false;
+            this.copySequenceFirstIndex = null;
+            try { navigator.clipboard?.writeText(JSON.stringify({type:'BLD_STATION_SEQUENCE',nodes:this.stationSequenceClipboard})).catch(()=>{}); } catch(e) {}
+            this.$emit('toast',['复制站序','','已复制 '+this.stationSequenceClipboard.filter(n=>n.type==='station').length+' 个站点及 '+this.stationSequenceClipboard.filter(n=>n.type==='waypoint').length+' 个途经点。']);
+        },
+        async pasteStationSequence(){
+            let clipboardNodes = this.stationSequenceClipboard;
+            try {
+                const raw = await navigator.clipboard?.readText();
+                if(raw){
+                    const payload = JSON.parse(raw);
+                    if(payload?.type === 'BLD_STATION_SEQUENCE' && Array.isArray(payload.nodes)) clipboardNodes = payload.nodes;
+                }
+            } catch(e) { /* Clipboard permission may be unavailable; use the in-app copy buffer. */ }
+            if(!clipboardNodes.length) return;
+            const current = this.nodes[this.selectedNode];
+            if(!current || current.type !== 'station'){
+                this.$emit('toast',['粘贴站序','','请先选中当前线路中的一个站点。',false]); return;
+            }
+            if(clipboardNodes[0]?.type !== 'station' || clipboardNodes[clipboardNodes.length-1]?.type !== 'station'){
+                this.$emit('toast',['粘贴站序','','剪贴板片段必须以站点开始并以站点结束。',false]); return;
+            }
+            this.saveOriginal();
+            const nextStation = this.nodes.findIndex((n,i)=>i>this.selectedNode && n.type==='station');
+            if(nextStation > this.selectedNode) this.nodes.splice(this.selectedNode+1,nextStation-this.selectedNode-1);
+            // The selected current station is the connection point; omit the
+            // copied first station to avoid duplicating the same endpoint.
+            const insertNodes = deepClone(clipboardNodes.slice(1));
+            this.nodes.splice(this.selectedNode+1,0,...insertNodes);
+            this.selectedNode += insertNodes.length;
+            this.lastSelectedWayPoint = null;
+            this.loadMapLine(false);
+            this.$emit('toast',['粘贴站序','','已在当前站后插入 '+insertNodes.filter(n=>n.type==='station').length+' 个站点及 '+insertNodes.filter(n=>n.type==='waypoint').length+' 个途经点。']);
+        },
         // setShowStationsOfLineMap
         // 设置站点是否显示
         setShowStationsOfLineMap(index){
